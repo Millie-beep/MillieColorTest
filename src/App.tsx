@@ -5,7 +5,142 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Trophy, Timer, RotateCcw, Play, Info, ChevronRight, BarChart3, Home, Zap, Flame, Skull, Clock, Infinity as InfinityIcon } from 'lucide-react';
+import { Trophy, Timer, RotateCcw, Play, Info, ChevronRight, BarChart3, Home, Zap, Flame, Skull, Clock, Infinity as InfinityIcon, Volume2, VolumeX } from 'lucide-react';
+
+// --- Audio Engine ---
+class GameAudio {
+  private ctx: AudioContext | null = null;
+  private masterGain: GainNode | null = null;
+  private musicSource: AudioBufferSourceNode | null = null;
+  private musicGain: GainNode | null = null;
+  private isMuted: boolean = false;
+  private musicBuffer: AudioBuffer | null = null;
+
+  init() {
+    if (this.ctx) return;
+    this.ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    this.masterGain = this.ctx.createGain();
+    this.masterGain.connect(this.ctx.destination);
+    this.updateMute();
+  }
+
+  setMute(muted: boolean) {
+    this.isMuted = muted;
+    this.updateMute();
+  }
+
+  private updateMute() {
+    if (this.masterGain) {
+      this.masterGain.gain.setTargetAtTime(this.isMuted ? 0 : 1, this.ctx?.currentTime || 0, 0.1);
+    }
+  }
+
+  async loadMusic(url: string) {
+    this.init();
+    if (!this.ctx) return;
+    
+    try {
+      const response = await fetch(url);
+      const arrayBuffer = await response.arrayBuffer();
+      this.musicBuffer = await this.ctx.decodeAudioData(arrayBuffer);
+    } catch (e) {
+      console.error('Failed to load background music', e);
+    }
+  }
+
+  playCorrect() {
+    this.beep(660, 0.1, 'sine');
+    setTimeout(() => this.beep(880, 0.1, 'sine'), 50);
+  }
+
+  playWrong() {
+    this.beep(220, 0.3, 'sawtooth', 0.1);
+  }
+
+  playGameOver() {
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    this.beep(440, 0.2, 'sine', 0.2, now);
+    this.beep(330, 0.2, 'sine', 0.2, now + 0.2);
+    this.beep(220, 0.4, 'sine', 0.2, now + 0.4);
+  }
+
+  private beep(freq: number, duration: number, type: OscillatorType = 'sine', vol = 0.2, startTime?: number) {
+    if (!this.ctx || !this.masterGain) return;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, startTime || this.ctx.currentTime);
+    
+    gain.gain.setValueAtTime(vol, startTime || this.ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, (startTime || this.ctx.currentTime) + duration);
+    
+    osc.connect(gain);
+    gain.connect(this.masterGain);
+    
+    osc.start(startTime || this.ctx.currentTime);
+    osc.stop((startTime || this.ctx.currentTime) + duration);
+  }
+
+  stopMusic() {
+    if (this.musicSource) {
+      this.musicSource.stop();
+      this.musicSource = null;
+    }
+  }
+
+  startMusic() {
+    if (!this.ctx || !this.masterGain) return;
+    this.stopMusic();
+
+    if (this.musicBuffer) {
+      this.musicSource = this.ctx.createBufferSource();
+      this.musicSource.buffer = this.musicBuffer;
+      this.musicSource.loop = true;
+      
+      this.musicGain = this.ctx.createGain();
+      this.musicGain.gain.setValueAtTime(0.2, this.ctx.currentTime);
+      
+      this.musicSource.connect(this.musicGain);
+      this.musicGain.connect(this.masterGain);
+      this.musicSource.start(0);
+    } else {
+      // Fallback to generated music if buffer not loaded yet
+      this.musicGain = this.ctx.createGain();
+      this.musicGain.gain.setValueAtTime(0.05, this.ctx.currentTime);
+      this.musicGain.connect(this.masterGain);
+
+      const playNote = (freq: number, time: number) => {
+        if (!this.ctx || !this.musicGain) return;
+        const osc = this.ctx.createOscillator();
+        const g = this.ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(freq, time);
+        g.gain.setValueAtTime(0, time);
+        g.gain.linearRampToValueAtTime(0.05, time + 2);
+        g.gain.linearRampToValueAtTime(0, time + 4);
+        osc.connect(g);
+        g.connect(this.musicGain);
+        osc.start(time);
+        osc.stop(time + 4);
+      };
+
+      const sequence = [261.63, 329.63, 392.00, 523.25];
+      let i = 0;
+      const loop = () => {
+        if (!this.musicGain || this.musicBuffer) return;
+        const now = this.ctx!.currentTime;
+        playNote(sequence[i % sequence.length], now);
+        i++;
+        setTimeout(loop, 4000);
+      };
+      loop();
+    }
+  }
+}
+
+const audio = new GameAudio();
 
 // --- Types ---
 type GameState = 'START' | 'PLAYING' | 'GAMEOVER';
@@ -22,6 +157,8 @@ interface Color {
 const GRID_SIZE = 5;
 const INITIAL_TIME = 15;
 const TIME_BONUS = 1.5;
+// 开发者可以在这里更换背景音乐 URL
+const BGM_URL = 'https://cdn.pixabay.com/audio/2022/03/15/audio_78390a2431.mp3'; 
 
 export default function App() {
   const [gameState, setGameState] = useState<GameState>('START');
@@ -29,6 +166,7 @@ export default function App() {
   const [timeLeft, setTimeLeft] = useState(INITIAL_TIME);
   const [difficultyLevel, setDifficultyLevel] = useState<DifficultyLevel>('MEDIUM');
   const [gameMode, setGameMode] = useState<GameMode>('TIMED');
+  const [isMuted, setIsMuted] = useState(false);
   
   const [highScore, setHighScore] = useState(() => {
     const saved = localStorage.getItem('color-test-highscore-v2');
@@ -50,7 +188,6 @@ export default function App() {
     
     const base: Color = { h, s, l };
     
-    // Difficulty calculation
     let baseDiff = 15;
     let rampRate = 3;
     
@@ -82,6 +219,8 @@ export default function App() {
   }, [score, difficultyLevel]);
 
   const startGame = () => {
+    audio.init();
+    audio.startMusic();
     setScore(0);
     setTimeLeft(INITIAL_TIME);
     setGameState('PLAYING');
@@ -92,16 +231,24 @@ export default function App() {
     setGameState('START');
   };
 
+  const toggleMute = () => {
+    const newMuted = !isMuted;
+    setIsMuted(newMuted);
+    audio.setMute(newMuted);
+  };
+
   const handleBlockClick = (index: number) => {
     if (gameState !== 'PLAYING') return;
 
     if (index === diffIndex) {
+      audio.playCorrect();
       setScore(prev => prev + 1);
       if (gameMode === 'TIMED') {
         setTimeLeft(prev => Math.min(INITIAL_TIME, prev + TIME_BONUS));
       }
       generateLevel();
     } else {
+      audio.playWrong();
       if (gameMode === 'TIMED') {
         setTimeLeft(prev => Math.max(0, prev - 3));
       }
@@ -110,10 +257,16 @@ export default function App() {
 
   // --- Effects ---
   useEffect(() => {
+    // 预加载背景音乐
+    audio.loadMusic(BGM_URL);
+  }, []);
+
+  useEffect(() => {
     if (gameState === 'PLAYING' && gameMode === 'TIMED') {
       timerRef.current = setInterval(() => {
         setTimeLeft(prev => {
           if (prev <= 0.1) {
+            audio.playGameOver();
             setGameState('GAMEOVER');
             return 0;
           }
@@ -144,7 +297,15 @@ export default function App() {
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-4 sm:p-6 font-sans bg-zinc-50 safe-area-inset">
-      {/* Header - Reduced margin on mobile */}
+      {/* Audio Toggle */}
+      <button 
+        onClick={toggleMute}
+        className="fixed top-4 right-4 z-50 p-3 bg-white border border-zinc-200 rounded-full shadow-sm text-zinc-600 hover:bg-zinc-50 transition-colors"
+      >
+        {isMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
+      </button>
+
+      {/* Header */}
       <header className="w-full max-w-md mb-4 sm:mb-8 flex flex-col items-center text-center">
         <motion.h1 
           initial={{ opacity: 0, y: -20 }}
@@ -194,7 +355,7 @@ export default function App() {
           </div>
         </div>
 
-        {/* Game Area - Constrained by viewport height on mobile */}
+        {/* Game Area */}
         <div className="relative aspect-square w-full max-h-[65vh] sm:max-h-none bg-white border-2 border-zinc-900 rounded-2xl p-3 sm:p-4 shadow-[6px_6px_0px_0px_rgba(0,0,0,0.1)] sm:shadow-[8px_8px_0px_0px_rgba(0,0,0,0.1)] overflow-hidden touch-none">
           <AnimatePresence mode="wait">
             {gameState === 'START' && (
@@ -341,7 +502,7 @@ export default function App() {
           </div>
         </div>
 
-        {/* Footer Info - Smaller on mobile */}
+        {/* Footer Info */}
         <div className="mt-4 sm:mt-8 space-y-3 sm:space-y-4">
           <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-3 sm:p-4 flex gap-3 sm:gap-4 items-start">
             <div className="bg-emerald-100 p-1.5 sm:p-2 rounded-lg shrink-0">
