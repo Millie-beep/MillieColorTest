@@ -155,15 +155,16 @@ interface Color {
 
 // --- Constants ---
 const GRID_SIZE = 5;
-const INITIAL_TIME = 15;
 const TIME_BONUS = 1.5;
-// 开发者可以在这里更换背景音乐 URL
-const BGM_URL = 'https://cdn.pixabay.com/audio/2022/03/15/audio_78390a2431.mp3'; 
+// 开发者可以将音乐文件放入 public 文件夹，命名为 bgm.mp3
+const BGM_URL = '/bgm.mp3'; 
 
 export default function App() {
   const [gameState, setGameState] = useState<GameState>('START');
   const [score, setScore] = useState(0);
-  const [timeLeft, setTimeLeft] = useState(INITIAL_TIME);
+  const [initialTime, setInitialTime] = useState(15);
+  const [timeLeft, setTimeLeft] = useState(15);
+  const [isPaused, setIsPaused] = useState(false);
   const [difficultyLevel, setDifficultyLevel] = useState<DifficultyLevel>('MEDIUM');
   const [gameMode, setGameMode] = useState<GameMode>('TIMED');
   const [isMuted, setIsMuted] = useState(false);
@@ -183,8 +184,8 @@ export default function App() {
   // --- Helpers ---
   const generateLevel = useCallback(() => {
     const h = Math.floor(Math.random() * 360);
-    const s = 40 + Math.floor(Math.random() * 40); // 40-80%
-    const l = 30 + Math.floor(Math.random() * 40); // 30-70%
+    const s = 40 + Math.floor(Math.random() * 40); 
+    const l = 30 + Math.floor(Math.random() * 40); 
     
     const base: Color = { h, s, l };
     
@@ -222,13 +223,19 @@ export default function App() {
     audio.init();
     audio.startMusic();
     setScore(0);
-    setTimeLeft(INITIAL_TIME);
+    setTimeLeft(initialTime);
+    setIsPaused(false);
     setGameState('PLAYING');
     generateLevel();
   };
 
   const backToHome = () => {
+    audio.stopMusic();
     setGameState('START');
+  };
+
+  const togglePause = () => {
+    setIsPaused(!isPaused);
   };
 
   const toggleMute = () => {
@@ -238,13 +245,13 @@ export default function App() {
   };
 
   const handleBlockClick = (index: number) => {
-    if (gameState !== 'PLAYING') return;
+    if (gameState !== 'PLAYING' || isPaused) return;
 
     if (index === diffIndex) {
       audio.playCorrect();
       setScore(prev => prev + 1);
       if (gameMode === 'TIMED') {
-        setTimeLeft(prev => Math.min(INITIAL_TIME, prev + TIME_BONUS));
+        setTimeLeft(prev => Math.min(initialTime, prev + TIME_BONUS));
       }
       generateLevel();
     } else {
@@ -257,12 +264,11 @@ export default function App() {
 
   // --- Effects ---
   useEffect(() => {
-    // 预加载背景音乐
     audio.loadMusic(BGM_URL);
   }, []);
 
   useEffect(() => {
-    if (gameState === 'PLAYING' && gameMode === 'TIMED') {
+    if (gameState === 'PLAYING' && gameMode === 'TIMED' && !isPaused) {
       timerRef.current = setInterval(() => {
         setTimeLeft(prev => {
           if (prev <= 0.1) {
@@ -280,7 +286,7 @@ export default function App() {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [gameState, gameMode]);
+  }, [gameState, gameMode, isPaused]);
 
   useEffect(() => {
     if (gameState === 'GAMEOVER') {
@@ -332,7 +338,7 @@ export default function App() {
               <motion.div 
                 className={`h-full ${timeLeft < 5 ? 'bg-red-500' : 'bg-emerald-500'}`}
                 initial={{ width: '100%' }}
-                animate={{ width: `${(timeLeft / INITIAL_TIME) * 100}%` }}
+                animate={{ width: `${(timeLeft / initialTime) * 100}%` }}
                 transition={{ duration: 0.1, ease: 'linear' }}
               />
             ) : (
@@ -364,14 +370,14 @@ export default function App() {
                 initial={{ opacity: 0, scale: 0.9 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 1.1 }}
-                className="absolute inset-0 flex flex-col items-center justify-center p-4 sm:p-6 bg-white z-10 overflow-y-auto"
+                className="absolute inset-0 flex flex-col items-center justify-start p-4 sm:p-6 bg-white z-10 overflow-hidden"
               >
-                <h2 className="text-lg sm:text-xl font-display font-bold mb-4 sm:mb-6">选择挑战模式</h2>
+                <h2 className="text-sm sm:text-xl font-display font-bold mb-2 sm:mb-4 text-zinc-800">选择挑战模式</h2>
                 
                 {/* Difficulty Selection */}
-                <div className="w-full space-y-2 sm:space-y-3 mb-6 sm:mb-8">
-                  <p className="text-[9px] sm:text-[10px] text-zinc-400 uppercase font-bold tracking-widest text-center">难度分级</p>
-                  <div className="grid grid-cols-3 gap-2">
+                <div className="w-full space-y-1 sm:space-y-3 mb-2 sm:mb-4">
+                  <p className="text-[7px] sm:text-[10px] text-zinc-400 uppercase font-bold tracking-widest text-center">难度分级</p>
+                  <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
                     {[
                       { id: 'EASY', label: '简单', icon: Zap, color: 'text-emerald-500' },
                       { id: 'MEDIUM', label: '中等', icon: Flame, color: 'text-amber-500' },
@@ -380,59 +386,109 @@ export default function App() {
                       <button
                         key={level.id}
                         onClick={() => setDifficultyLevel(level.id as DifficultyLevel)}
-                        className={`flex flex-col items-center gap-1.5 sm:gap-2 p-2 sm:p-3 rounded-xl border-2 transition-all ${
+                        className={`flex flex-col items-center gap-1 sm:gap-2 p-1 sm:p-3 rounded-xl border-2 transition-all ${
                           difficultyLevel === level.id 
                             ? 'border-zinc-900 bg-zinc-50 scale-105' 
                             : 'border-transparent bg-zinc-50/50 opacity-60'
                         }`}
                       >
-                        <level.icon className={`w-4 h-4 sm:w-5 h-5 ${level.color}`} />
-                        <span className="text-[10px] sm:text-xs font-bold">{level.label}</span>
+                        <level.icon className={`w-3 h-3 sm:w-5 h-5 ${level.color}`} />
+                        <span className="text-[8px] sm:text-xs font-bold">{level.label}</span>
                       </button>
                     ))}
                   </div>
                 </div>
 
+                {/* Time Selection */}
+                {gameMode === 'TIMED' && (
+                  <div className="w-full space-y-1 sm:space-y-3 mb-2 sm:mb-4">
+                    <p className="text-[7px] sm:text-[10px] text-zinc-400 uppercase font-bold tracking-widest text-center">初始时间</p>
+                    <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
+                      {[15, 30, 60].map((t) => (
+                        <button
+                          key={t}
+                          onClick={() => setInitialTime(t)}
+                          className={`p-1 sm:p-2 rounded-xl border-2 transition-all font-bold text-[9px] sm:text-xs ${
+                            initialTime === t 
+                              ? 'border-zinc-900 bg-zinc-50 scale-105' 
+                              : 'border-transparent bg-zinc-50/50 opacity-60'
+                          }`}
+                        >
+                          {t}s
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {/* Mode Selection */}
-                <div className="w-full space-y-2 sm:space-y-3 mb-6 sm:mb-8">
-                  <p className="text-[9px] sm:text-[10px] text-zinc-400 uppercase font-bold tracking-widest text-center">游戏模式</p>
-                  <div className="grid grid-cols-2 gap-2 sm:gap-3">
+                <div className="w-full space-y-1 sm:space-y-3 mb-3 sm:mb-6">
+                  <p className="text-[7px] sm:text-[10px] text-zinc-400 uppercase font-bold tracking-widest text-center">游戏模式</p>
+                  <div className="grid grid-cols-2 gap-1.5 sm:gap-3">
                     <button
                       onClick={() => setGameMode('TIMED')}
-                      className={`flex items-center justify-center gap-2 p-2 sm:p-3 rounded-xl border-2 transition-all ${
+                      className={`flex items-center justify-center gap-1 sm:gap-2 p-1.5 sm:p-3 rounded-xl border-2 transition-all ${
                         gameMode === 'TIMED' 
                           ? 'border-zinc-900 bg-zinc-50' 
                           : 'border-transparent bg-zinc-50/50 opacity-60'
                       }`}
                     >
-                      <Clock className="w-3.5 h-3.5 sm:w-4 h-4" />
-                      <span className="text-[10px] sm:text-xs font-bold">计时挑战</span>
+                      <Clock className="w-2.5 h-2.5 sm:w-4 h-4" />
+                      <span className="text-[8px] sm:text-xs font-bold">计时挑战</span>
                     </button>
                     <button
                       onClick={() => setGameMode('ZEN')}
-                      className={`flex items-center justify-center gap-2 p-2 sm:p-3 rounded-xl border-2 transition-all ${
+                      className={`flex items-center justify-center gap-1 sm:gap-2 p-1.5 sm:p-3 rounded-xl border-2 transition-all ${
                         gameMode === 'ZEN' 
                           ? 'border-zinc-900 bg-zinc-50' 
                           : 'border-transparent bg-zinc-50/50 opacity-60'
                       }`}
                     >
-                      <InfinityIcon className="w-3.5 h-3.5 sm:w-4 h-4" />
-                      <span className="text-[10px] sm:text-xs font-bold">无尽练习</span>
+                      <InfinityIcon className="w-2.5 h-2.5 sm:w-4 h-4" />
+                      <span className="text-[8px] sm:text-xs font-bold">无尽练习</span>
                     </button>
                   </div>
                 </div>
 
                 <button 
                   onClick={startGame}
-                  className="w-full group flex items-center justify-center gap-3 bg-zinc-900 text-white px-6 sm:px-8 py-3.5 sm:py-4 rounded-2xl font-bold text-base sm:text-lg hover:bg-emerald-600 transition-all active:scale-95 shadow-lg"
+                  className="w-full group flex items-center justify-center gap-2 sm:gap-3 bg-zinc-900 text-white px-4 sm:px-8 py-2 sm:py-4 rounded-2xl font-bold text-xs sm:text-lg hover:bg-emerald-600 transition-all active:scale-95 shadow-lg"
                 >
                   开始挑战
-                  <Play className="w-4 h-4 sm:w-5 h-5 fill-current" />
+                  <Play className="w-3 h-3 sm:w-5 h-5 fill-current" />
                 </button>
 
-                <div className="mt-4 sm:mt-6 flex items-center gap-2 text-zinc-400 text-[9px] sm:text-[10px] uppercase tracking-widest font-bold">
-                  <BarChart3 className="w-3 h-3" />
+                <div className="mt-auto pt-2 flex items-center gap-2 text-zinc-400 text-[7px] sm:text-[10px] uppercase tracking-widest font-bold">
+                  <BarChart3 className="w-2.5 h-2.5" />
                   最高分: {highScore[difficultyLevel]}
+                </div>
+              </motion.div>
+            )}
+
+            {gameState === 'PLAYING' && isPaused && (
+              <motion.div 
+                key="paused"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="absolute inset-0 flex flex-col items-center justify-center p-6 bg-white/80 backdrop-blur-md z-30"
+              >
+                <h2 className="text-3xl font-display font-bold mb-8 text-zinc-900">游戏暂停</h2>
+                <div className="w-full max-w-[200px] space-y-4">
+                  <button 
+                    onClick={togglePause}
+                    className="w-full bg-zinc-900 text-white px-6 py-3 rounded-xl font-bold hover:bg-emerald-600 transition-all active:scale-95 shadow-lg flex items-center justify-center gap-2"
+                  >
+                    <Play className="w-4 h-4 fill-current" />
+                    继续游戏
+                  </button>
+                  <button 
+                    onClick={backToHome}
+                    className="w-full bg-white text-zinc-900 border-2 border-zinc-900 px-6 py-3 rounded-xl font-bold hover:bg-zinc-50 transition-all active:scale-95 flex items-center justify-center gap-2"
+                  >
+                    <Home className="w-4 h-4" />
+                    退出游戏
+                  </button>
                 </div>
               </motion.div>
             )}
@@ -501,6 +557,26 @@ export default function App() {
             ))}
           </div>
         </div>
+
+        {/* Game Controls */}
+        {gameState === 'PLAYING' && (
+          <div className="mt-4 flex gap-3">
+            <button 
+              onClick={togglePause}
+              className="flex-1 bg-white border-2 border-zinc-900 py-2.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2 hover:bg-zinc-50 transition-all active:scale-95"
+            >
+              {isPaused ? <Play className="w-4 h-4 fill-current" /> : <div className="w-4 h-4 flex gap-1 justify-center items-center"><div className="w-1 h-3 bg-zinc-900" /><div className="w-1 h-3 bg-zinc-900" /></div>}
+              {isPaused ? '继续' : '暂停'}
+            </button>
+            <button 
+              onClick={backToHome}
+              className="flex-1 bg-white border-2 border-zinc-900 py-2.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2 hover:bg-zinc-50 transition-all active:scale-95"
+            >
+              <Home className="w-4 h-4" />
+              退出
+            </button>
+          </div>
+        )}
 
         {/* Footer Info */}
         <div className="mt-4 sm:mt-8 space-y-3 sm:space-y-4">
